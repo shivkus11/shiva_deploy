@@ -1,0 +1,16 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function clinicUser() {
+      return request.auth != null && firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role in ['doctor', 'staff'];
+    }
+    function ownsPatient(patientId) {
+      return request.auth != null && firestore.get(/databases/(default)/documents/patients/$(patientId)).data.uid == request.auth.uid;
+    }
+    match /patients/{patientId}/{fileName} {
+      allow read: if clinicUser() || ownsPatient(patientId);
+      allow create: if (clinicUser() || ownsPatient(patientId)) && request.resource.size < 10 * 1024 * 1024 && request.resource.contentType.matches('(image/.*|application/pdf)');
+      allow update, delete: if clinicUser();
+    }
+  }
+}

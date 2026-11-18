@@ -1,0 +1,36 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function role() { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role; }
+    function isClinic() { return signedIn() && role() in ['doctor', 'staff']; }
+    function ownsPatient(patientId) {
+      return signedIn() && get(/databases/$(database)/documents/patients/$(patientId)).data.uid == request.auth.uid;
+    }
+
+    match /users/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || isClinic());
+      // A user may create only a patient account. Clinic roles must be assigned by an administrator.
+      allow create: if signedIn() && request.auth.uid == uid && request.resource.data.role == 'patient';
+      allow update, delete: if isClinic();
+    }
+    match /patients/{patientId} {
+      allow create: if signedIn() && request.resource.data.uid == request.auth.uid && role() == 'patient';
+      allow read: if isClinic() || (signedIn() && resource.data.uid == request.auth.uid);
+      allow update: if isClinic() || (signedIn() && resource.data.uid == request.auth.uid && request.resource.data.uid == resource.data.uid);
+      allow delete: if isClinic();
+    }
+    match /appointments/{appointmentId} {
+      allow create: if isClinic() || (signedIn() && request.resource.data.uid == request.auth.uid && ownsPatient(request.resource.data.patientId) && request.resource.data.status == 'Requested');
+      allow read: if isClinic() || (signedIn() && resource.data.uid == request.auth.uid);
+      allow update: if isClinic() || (signedIn() && resource.data.uid == request.auth.uid && request.resource.data.uid == resource.data.uid && request.resource.data.status == 'Requested' && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['date','time','status','updatedAt']));
+      allow delete: if isClinic();
+    }
+    match /{collection}/{recordId} {
+      allow read: if collection in ['treatments','images','consents','payments'] && (isClinic() || (signedIn() && resource.data.uid == request.auth.uid));
+      allow create: if collection in ['treatments','images','consents','payments'] && (isClinic() || (signedIn() && request.resource.data.uid == request.auth.uid && ownsPatient(request.resource.data.patientId) && collection in ['images','consents']));
+      allow update: if collection in ['treatments','images','consents','payments'] && isClinic();
+      allow delete: if collection in ['treatments','images','consents','payments'] && isClinic();
+    }
+  }
+}
